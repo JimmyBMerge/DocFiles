@@ -1,0 +1,70 @@
+openapi: 3.0.1
+info:
+  title: SearchProductDetails
+  description: >
+    Search for products or SKUs by matching keywords against Part Number, Vendor Part Number, Model, or Description. 
+    Returns brand, supplier pricing, and stock/ETA information when available.
+  version: "1.0.0"
+
+paths:
+  /search-products:
+    post:
+      summary: Search products and return supplier information
+      operationId: searchProducts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                SearchTerm:
+                  type: string
+                  description: A search keyword (e.g., model, part number, or description)
+                MaxResults:
+                  type: integer
+                  description: Maximum number of results to return
+                  default: 5
+                IncludeOOS:
+                  type: boolean
+                  description: Whether to include out-of-stock items
+                  default: false
+      responses:
+        '200':
+          description: List of matching products with supplier details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ResultCount:
+                    type: integer
+                  Products:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        Product:
+                          type: string
+                          description: Product or model name
+                        Brand:
+                          type: string
+                        Model:
+                          type: string
+                        Matches:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              Supplier:
+                                type: string
+                              VendorPartNumber:
+                                type: string
+                              CostEx:
+                                type: string
+                              SOH:
+                                type: integer
+                                nullable: true
+                              ETA:
+                                type: string
+                                nullable: true
