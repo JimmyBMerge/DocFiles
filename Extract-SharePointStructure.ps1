@@ -8,10 +8,12 @@
 
 .PARAMETER SiteId
     SharePoint site identifier. Accepts any of the following forms:
-    - Full Graph composite identifier (e.g.
-      contoso.sharepoint.com,39999de1-97a2-40e5-9c1d-95288ba1d0fa,fad53fcc-ac9a-4060-87b9-f9f0e69c0dcb)
-    - Site GUID only (requires SiteHostname and SitePath to expand to the composite form)
-    - Blank/omitted (the script resolves the identifier using SiteHostname and SitePath)
+    - Composite Graph identifier `hostname,guid,guid`. Example:
+        -SiteId "contoso.sharepoint.com,39999de1-97a2-40e5-9c1d-95288ba1d0fa,fad53fcc-ac9a-4060-87b9-f9f0e69c0dcb"
+    - Site GUID only (requires `SiteHostname` and `SitePath`). Example:
+        -SiteId "39999de1-97a2-40e5-9c1d-95288ba1d0fa" -SiteHostname "contoso.sharepoint.com" -SitePath "sites/ProjectX"
+    - Omit `SiteId` and provide `SiteHostname` + `SitePath`. Example:
+        -SiteHostname "contoso.sharepoint.com" -SitePath "sites/ProjectX"
     When not provided, the script attempts to read the value from an Automation variable named
     `SiteId`.
 
@@ -55,12 +57,22 @@
     `site-structure`.
 
 .EXAMPLE
-    .\Extract-SharePointStructure.ps1
+    .\Extract-SharePointStructure.ps1 -SiteId "contoso.sharepoint.com,39999de1-97a2-40e5-9c1d-95288ba1d0fa,fad53fcc-ac9a-4060-87b9-f9f0e69c0dcb"
 
-    Creates a JSON snapshot of the SharePoint site's structure and stores it in the specified
-    container. All required values are resolved from Automation assets (variables and the
-    `SharePointAppRegistration` credential). Provide explicit parameter values to override the
-    Automation defaults when testing locally.
+    Uses the supplied composite SharePoint site identifier to build the structure snapshot and
+    upload it to the configured storage account.
+
+.EXAMPLE
+    .\Extract-SharePointStructure.ps1 -SiteId "39999de1-97a2-40e5-9c1d-95288ba1d0fa" -SiteHostname "contoso.sharepoint.com" -SitePath "sites/ProjectX"
+
+    Resolves the composite SharePoint site identifier from the provided GUID and hostname/path
+    before collecting the site snapshot.
+
+.EXAMPLE
+    .\Extract-SharePointStructure.ps1 -SiteHostname "contoso.sharepoint.com" -SitePath "sites/ProjectX"
+
+    Resolves the SharePoint site identifier using the hostname/path combination and uploads the
+    collected structure to storage.
 
 .NOTES
     When importing the script into an Azure Automation PowerShell runbook, the parameters in the `param` block will surface as runbook input fields. You can provide values by:
@@ -255,69 +267,55 @@ function Normalize-SiteId {
         [string]$GraphToken
     )
 
-    $hasHostnamePath = -not [string]::IsNullOrWhiteSpace($SiteHostname) -and -not [string]::IsNullOrWhiteSpace($SitePath)
+    function _Clean([string]$s) {
+        if ([string]::IsNullOrWhiteSpace($s)) { return $null }
+        $t = $s.Trim()
+        if ($t.StartsWith('"') -and $t.EndsWith('"') -and $t.Length -ge 2) { $t = $t.Substring(1, $t.Length-2) }
+        if ($t.StartsWith("'") -and $t.EndsWith("'") -and $t.Length -ge 2) { $t = $t.Substring(1, $t.Length-2) }
+        $t = $t -replace '[\r\n\t]', '' -replace '[\u201C\u201D]', '"' -replace '[\u2018\u2019]', "'"
+        return $t.Trim()
+    }
 
-    if (-not [string]::IsNullOrWhiteSpace($SiteId)) {
-        # Case 1: Composite SiteId (hostname,guid,guid)
-        if ($SiteId -match ',') {
-            $parts = $SiteId.Split(',')
-            if ($parts.Count -ne 3) {
-                throw "Invalid SiteId format: '$SiteId'. Expected format is 'hostname,siteCollectionId,siteId'."
-            }
+    $SiteId       = _Clean $SiteId
+    $SiteHostname = _Clean $SiteHostname
+    $SitePath     = _Clean $SitePath
 
-            $hostname, $collectionId, $siteGuid = $parts
+    $hasHostPath  = -not [string]::IsNullOrWhiteSpace($SiteHostname) -and -not [string]::IsNullOrWhiteSpace($SitePath)
+    $guidRe = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    $hostRe = '^[A-Za-z0-9.-]+$'
 
-            if ([string]::IsNullOrWhiteSpace($hostname)) {
-                throw "Invalid SiteId: missing hostname in '$SiteId'."
-            }
-
-            if ($collectionId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-                throw "Invalid SiteId: siteCollectionId part '$collectionId' is not a valid GUID."
-            }
-
-            if ($siteGuid -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-                throw "Invalid SiteId: siteId part '$siteGuid' is not a valid GUID."
-            }
-
-            Write-Output "Using supplied composite SiteId '$SiteId'."
-            return $SiteId
+    if ($SiteId) {
+        if ($SiteId.Contains(',')) {
+            $parts = $SiteId.Split(',') | ForEach-Object { _Clean $_ }
+            if ($parts.Count -ne 3) { throw "Invalid SiteId: expected 3 parts, got $($parts.Count): '$SiteId'." }
+            $h,$coll,$sid = $parts
+            if ([string]::IsNullOrWhiteSpace($h) -or -not ($h -match $hostRe)) { throw "Invalid SiteId: hostname '$h' is missing/invalid." }
+            if ($coll -notmatch $guidRe) { throw "Invalid SiteId: siteCollectionId '$coll' is not a GUID." }
+            if ($sid  -notmatch $guidRe) { throw "Invalid SiteId: siteId '$sid' is not a GUID." }
+            $norm = ("{0},{1},{2}" -f $h.ToLowerInvariant(), $coll.ToLowerInvariant(), $sid.ToLowerInvariant())
+            Write-Output "Using supplied composite SiteId '$norm'."
+            return $norm
         }
 
-        # Case 2: GUID only
-        if ($SiteId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-            if (-not $hasHostnamePath) {
-                throw "SiteId was provided as GUID only. Please also supply SiteHostname and SitePath to resolve full Graph site ID."
-            }
-
-            Write-Output "SiteId '$SiteId' detected as GUID. Resolving composite identifier using hostname/path..."
-            $uri = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
+        if ($SiteId -match $guidRe) {
+            if (-not $hasHostPath) { throw "GUID given: also supply SiteHostname and SitePath to resolve composite SiteId." }
+            Write-Output "SiteId '$SiteId' detected as GUID. Resolving composite via hostname/path..."
+            $uri  = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
             $site = Invoke-GraphGet -Uri $uri -GraphToken $GraphToken
-            if (-not $site -or -not $site.id) {
-                throw "Failed to resolve site using hostname '$SiteHostname' and path '$SitePath'."
-            }
-
-            Write-Output "Resolved composite SiteId '$($site.id)' from GUID '$SiteId'."
-            return $site.id
+            if (-not $site -or -not $site.id) { throw "Failed to resolve site for $SiteHostname/$SitePath." }
+            return ($site.id -as [string]).Trim()
         }
 
-        # Case 3: Invalid format
         Write-Output "SiteId '$SiteId' not recognized as composite or GUID. Falling back to hostname/path..."
     }
 
-    # Case 4: No SiteId or unrecognized value
-    if (-not $hasHostnamePath) {
-        throw "Either SiteId (composite or GUID) or both SiteHostname and SitePath must be provided."
-    }
+    if (-not $hasHostPath) { throw "Provide a composite SiteId or GUID, or provide both SiteHostname and SitePath." }
 
     Write-Output "Resolving SiteId using hostname/path $SiteHostname/$SitePath..."
-    $fallbackUri = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
+    $fallbackUri  = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
     $fallbackSite = Invoke-GraphGet -Uri $fallbackUri -GraphToken $GraphToken
-    if (-not $fallbackSite -or -not $fallbackSite.id) {
-        throw "Failed to resolve site using hostname '$SiteHostname' and path '$SitePath'."
-    }
-
-    Write-Output "Resolved composite SiteId '$($fallbackSite.id)' using hostname/path."
-    return $fallbackSite.id
+    if (-not $fallbackSite -or -not $fallbackSite.id) { throw "Failed to resolve site for $SiteHostname/$SitePath." }
+    return ($fallbackSite.id -as [string]).Trim()
 }
 
 function Get-DriveStructure {
@@ -474,6 +472,8 @@ try {
     Write-Output "✅ Successfully obtained Graph token."
 
     $siteId = Normalize-SiteId -SiteId $SiteId -SiteHostname $SiteHostname -SitePath $SitePath -GraphToken $graphToken
+    Write-Output "DEBUG SiteId  : '$siteId'"
+    Write-Output "DEBUG Lookup  : https://graph.microsoft.com/v1.0/sites/$siteId"
     Write-Output "Resolving SharePoint site details using composite id '$siteId'..."
     $site = Invoke-GraphGet -Uri "https://graph.microsoft.com/v1.0/sites/$siteId" -GraphToken $graphToken
     if (-not $site) {
