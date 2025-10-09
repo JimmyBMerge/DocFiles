@@ -325,6 +325,12 @@ function Get-DriveStructure {
         [string]$ParentPath = ''
     )
 
+    $DriveId = "$DriveId".Trim() -replace '[\r\n\t]', ''
+    $DriveId = $DriveId.Trim("'`\"".ToCharArray())
+    if ([string]::IsNullOrWhiteSpace($DriveId)) {
+        throw "DriveId is required."
+    }
+
     $normalizedPath = if ($ParentPath) { ($ParentPath -replace '\\', '/') } else { $null }
     $encodedPath = if ($normalizedPath) {
         ($([System.Uri]::EscapeDataString($normalizedPath)) -replace '%2F', '/')
@@ -334,6 +340,7 @@ function Get-DriveStructure {
 
     $driveSegment = if ($encodedPath) { "/root:/$($encodedPath):/children" } else { "/root/children" }
     $uri = "https://graph.microsoft.com/v1.0/drives/$DriveId$driveSegment?`$select=id,name,folder,webUrl"
+    Write-Verbose "GET $uri"
     $children = Get-GraphCollection -Uri $uri -GraphToken $GraphToken
 
     foreach ($child in $children) {
@@ -491,12 +498,28 @@ try {
     Write-Output "Enumerating drives and folder structure..."
     $drivesUri = "https://graph.microsoft.com/v1.0/sites/$siteId/drives?`$select=id,name,webUrl"
     $driveItems = Get-GraphCollection -Uri $drivesUri -GraphToken $graphToken
-    $drives = $driveItems | ForEach-Object {
-        [ordered]@{
-            DriveId   = $_.id
-            Name      = $_.name
-            WebUrl    = $_.webUrl
-            Structure = Get-DriveStructure -DriveId $_.id -GraphToken $graphToken
+    $drives = @()
+    foreach ($drive in $driveItems) {
+        $driveId = "$($drive.id)".Trim() -replace '[\r\n\t]', ''
+        $driveId = $driveId.Trim("'`\"".ToCharArray())
+        Write-Output "DEBUG: Processing drive '$($drive.name)' id '$driveId'"
+
+        if ([string]::IsNullOrWhiteSpace($driveId)) {
+            Write-Warning "⚠️ Skipped drive '$($drive.name)': drive identifier was empty after sanitization."
+            continue
+        }
+
+        try {
+            $structure = Get-DriveStructure -DriveId $driveId -GraphToken $graphToken
+            $drives += [ordered]@{
+                DriveId   = $driveId
+                Name      = $drive.name
+                WebUrl    = $drive.webUrl
+                Structure = $structure
+            }
+        }
+        catch {
+            Write-Warning "⚠️ Skipped drive '$($drive.name)' ($driveId): $($_.Exception.Message)"
         }
     }
 
