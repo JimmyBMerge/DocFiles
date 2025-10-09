@@ -326,7 +326,7 @@ function Get-DriveStructure {
     )
 
     $DriveId = "$DriveId".Trim() -replace '[\r\n\t]', ''
-    $DriveId = $DriveId.Trim("'`\"".ToCharArray())
+    $DriveId = $DriveId.Trim(@([char]39, [char]96, [char]34))
     if ([string]::IsNullOrWhiteSpace($DriveId)) {
         throw "DriveId is required."
     }
@@ -501,7 +501,7 @@ try {
     $drives = @()
     foreach ($drive in $driveItems) {
         $driveId = "$($drive.id)".Trim() -replace '[\r\n\t]', ''
-        $driveId = $driveId.Trim("'`\"".ToCharArray())
+        $driveId = $driveId.Trim(@([char]39, [char]96, [char]34))
         Write-Output "DEBUG: Processing drive '$($drive.name)' id '$driveId'"
 
         if ([string]::IsNullOrWhiteSpace($driveId)) {
