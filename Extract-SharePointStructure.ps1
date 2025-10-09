@@ -39,6 +39,10 @@
     Secure string containing the client secret associated with the app registration. When not
     supplied, the password from the `SharePointAppRegistration` Automation credential is used.
 
+.PARAMETER SubscriptionId
+    Azure subscription identifier that contains the target storage account. When omitted, the
+    script attempts to read the value from an Automation variable named `SubscriptionId`.
+
 .PARAMETER StorageAccountName
     Target storage account name where the snapshot should be stored. When omitted, the script
     attempts to read the value from an Automation variable named `StorageAccountName`.
@@ -85,7 +89,7 @@
             -Parameters @{ OutputBlobPrefix = 'projectx-site' }
         ```
     Configure Automation variables named `SiteId` (or `SiteHostname` and `SitePath`), `TenantId`,
-    `StorageAccountName`, `StorageResourceGroup`, `StorageContainerName`, and (optionally)
+    `SubscriptionId`, `StorageAccountName`, `StorageResourceGroup`, `StorageContainerName`, and (optionally)
     `OutputBlobPrefix`. Store the
     app registration's client ID and secret in the `SharePointAppRegistration` Automation credential.
     When running the script outside Automation, you can still provide parameters explicitly.
@@ -98,6 +102,7 @@ param(
     [string]$TenantId,
     [string]$ClientId,
     [System.Security.SecureString]$ClientSecret,
+    [string]$SubscriptionId,
     [string]$StorageAccountName,
     [string]$StorageResourceGroup,
     [string]$StorageContainerName,
@@ -426,6 +431,7 @@ $SitePath = Resolve-RunbookValue -Name 'SitePath' -SuppliedValue $SitePath -Opti
 $TenantId = Resolve-RunbookValue -Name 'TenantId' -SuppliedValue $TenantId
 $ClientId = Resolve-RunbookValue -Name 'ClientId' -SuppliedValue $ClientId -Optional
 $ClientSecret = Resolve-RunbookValue -Name 'ClientSecret' -SuppliedValue $ClientSecret -Optional
+$SubscriptionId = Resolve-RunbookValue -Name 'SubscriptionId' -SuppliedValue $SubscriptionId
 $StorageAccountName = Resolve-RunbookValue -Name 'StorageAccountName' -SuppliedValue $StorageAccountName
 $StorageResourceGroup = Resolve-RunbookValue -Name 'StorageResourceGroup' -SuppliedValue $StorageResourceGroup
 $StorageContainerName = Resolve-RunbookValue -Name 'StorageContainerName' -SuppliedValue $StorageContainerName
@@ -453,6 +459,10 @@ if ((-not $ClientId) -or (-not $ClientSecret)) {
     }
 }
 
+if ($SubscriptionId -is [string]) {
+    $SubscriptionId = $SubscriptionId.Trim()
+}
+
 if ($ClientSecret -and $ClientSecret -isnot [System.Security.SecureString]) {
     if ($ClientSecret -is [string]) {
         $ClientSecret = ConvertTo-SecureString -String $ClientSecret -AsPlainText -Force
@@ -470,6 +480,16 @@ try {
     Write-Output "Connecting to Azure with app registration credentials..."
     $servicePrincipalCredential = New-Object System.Management.Automation.PSCredential($ClientId, $ClientSecret)
     Connect-AzAccount -ServicePrincipal -Tenant $TenantId -Credential $servicePrincipalCredential | Out-Null
+
+    if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
+        Write-Output "Setting Azure context to subscription '$SubscriptionId'..."
+        try {
+            Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
+        }
+        catch {
+            throw "Failed to set Azure context to subscription '$SubscriptionId': $($_.Exception.Message)"
+        }
+    }
 
     Write-Output "Requesting Microsoft Graph token (client credentials flow)..."
     $graphToken = Get-GraphToken -TenantId $TenantId -ClientId $ClientId -ClientSecret $ClientSecret
