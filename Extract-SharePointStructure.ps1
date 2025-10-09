@@ -293,25 +293,25 @@ function Normalize-SiteId {
             if ($coll -notmatch $guidRe) { throw "Invalid SiteId: siteCollectionId '$coll' is not a GUID." }
             if ($sid  -notmatch $guidRe) { throw "Invalid SiteId: siteId '$sid' is not a GUID." }
             $norm = ("{0},{1},{2}" -f $h.ToLowerInvariant(), $coll.ToLowerInvariant(), $sid.ToLowerInvariant())
-            Write-Output "Using supplied composite SiteId '$norm'."
+            Write-Verbose "Using supplied composite SiteId '$norm'."
             return $norm
         }
 
         if ($SiteId -match $guidRe) {
             if (-not $hasHostPath) { throw "GUID given: also supply SiteHostname and SitePath to resolve composite SiteId." }
-            Write-Output "SiteId '$SiteId' detected as GUID. Resolving composite via hostname/path..."
+            Write-Verbose "SiteId '$SiteId' detected as GUID. Resolving composite via hostname/path..."
             $uri  = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
             $site = Invoke-GraphGet -Uri $uri -GraphToken $GraphToken
             if (-not $site -or -not $site.id) { throw "Failed to resolve site for $SiteHostname/$SitePath." }
             return ($site.id -as [string]).Trim()
         }
 
-        Write-Output "SiteId '$SiteId' not recognized as composite or GUID. Falling back to hostname/path..."
+        Write-Verbose "SiteId '$SiteId' not recognized as composite or GUID. Falling back to hostname/path..."
     }
 
     if (-not $hasHostPath) { throw "Provide a composite SiteId or GUID, or provide both SiteHostname and SitePath." }
 
-    Write-Output "Resolving SiteId using hostname/path $SiteHostname/$SitePath..."
+    Write-Verbose "Resolving SiteId using hostname/path $SiteHostname/$SitePath..."
     $fallbackUri  = "https://graph.microsoft.com/v1.0/sites/$($SiteHostname):/$($SitePath)"
     $fallbackSite = Invoke-GraphGet -Uri $fallbackUri -GraphToken $GraphToken
     if (-not $fallbackSite -or -not $fallbackSite.id) { throw "Failed to resolve site for $SiteHostname/$SitePath." }
